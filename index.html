@@ -1,0 +1,168 @@
+
+import React, { useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import { Play, RotateCcw, Plus, Trash2, BrainCircuit } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+
+const initialRows = [
+  { x1: 0.1, x2: 0.5, y: 0 },
+  { x1: 0.2, x2: 0.4, y: 0 },
+  { x1: 0.3, x2: 0.3, y: 1 },
+  { x1: 0.4, x2: 0.2, y: 1 },
+  { x1: 0.5, x2: 0.1, y: 1 },
+];
+
+const sigmoid = z => 1 / (1 + Math.exp(-Math.max(-30, Math.min(30, z))));
+const relu = z => Math.max(0, z);
+const rand = () => (Math.random() - 0.5) * 1.2;
+
+function createNetwork(hidden) {
+  return {
+    w1: Array.from({ length: hidden }, () => [rand(), rand()]),
+    b1: Array.from({ length: hidden }, rand),
+    w2: Array.from({ length: hidden }, rand),
+    b2: rand(),
+  };
+}
+
+function forward(net, x) {
+  const h = net.w1.map((w, j) => relu(w[0] * x[0] + w[1] * x[1] + net.b1[j]));
+  const z = h.reduce((s, value, j) => s + value * net.w2[j], net.b2);
+  return { h, p: sigmoid(z) };
+}
+
+function train(rows, hidden, epochs, learningRate) {
+  const net = createNetwork(hidden);
+  const history = [];
+  for (let epoch = 0; epoch < epochs; epoch++) {
+    let loss = 0;
+    for (const row of rows) {
+      const x = [Number(row.x1), Number(row.x2)];
+      const target = Number(row.y);
+      const { h, p } = forward(net, x);
+      loss += -(target * Math.log(p + 1e-8) + (1 - target) * Math.log(1 - p + 1e-8));
+      const dz2 = p - target;
+      const oldW2 = [...net.w2];
+      for (let j = 0; j < hidden; j++) {
+        net.w2[j] -= learningRate * dz2 * h[j];
+      }
+      net.b2 -= learningRate * dz2;
+      for (let j = 0; j < hidden; j++) {
+        const pre = net.w1[j][0] * x[0] + net.w1[j][1] * x[1] + net.b1[j];
+        const dz1 = dz2 * oldW2[j] * (pre > 0 ? 1 : 0);
+        net.w1[j][0] -= learningRate * dz1 * x[0];
+        net.w1[j][1] -= learningRate * dz1 * x[1];
+        net.b1[j] -= learningRate * dz1;
+      }
+    }
+    history.push(loss / rows.length);
+  }
+  return { net, history };
+}
+
+function Layer({ title, count, color }) {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</div>
+      <div className="flex flex-col gap-2">
+        {Array.from({ length: count }, (_, i) => (
+          <motion.div key={i} initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: i * 0.03 }}
+            className={`h-8 w-8 rounded-full border-4 ${color} bg-white shadow-sm`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function InteractiveMLPDemo() {
+  const [rows, setRows] = useState(initialRows);
+  const [hidden, setHidden] = useState(8);
+  const [epochs, setEpochs] = useState(100);
+  const [lr, setLr] = useState(0.1);
+  const [test, setTest] = useState({ x1: 0.2, x2: 0.4 });
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+
+  const accuracy = useMemo(() => {
+    if (!result) return null;
+    const correct = rows.filter(r => (forward(result.net, [Number(r.x1), Number(r.x2)]).p > 0.5 ? 1 : 0) === Number(r.y)).length;
+    return correct / rows.length;
+  }, [result, rows]);
+
+  const run = () => {
+    setRunning(true);
+    setTimeout(() => {
+      setResult(train(rows, hidden, epochs, lr));
+      setRunning(false);
+    }, 120);
+  };
+
+  const prediction = result ? forward(result.net, [Number(test.x1), Number(test.x2)]).p : null;
+  const maxLoss = result ? Math.max(...result.history, 0.1) : 1;
+  const points = result ? result.history.map((v, i) => `${(i / Math.max(1, result.history.length - 1)) * 100},${100 - (v / maxLoss) * 90}`).join(" ") : "";
+
+  const updateRow = (i, key, value) => setRows(rows.map((r, idx) => idx === i ? { ...r, [key]: value } : r));
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-violet-50 p-5 text-slate-900">
+      <div className="mx-auto max-w-6xl space-y-5">
+        <header className="rounded-2xl bg-slate-950 p-6 text-white shadow-xl">
+          <div className="flex items-center gap-3"><BrainCircuit className="h-9 w-9 text-cyan-300" /><div>
+            <h1 className="text-2xl font-bold">Build and Train a Multi-Layer Perceptron</h1>
+            <p className="mt-1 text-sm text-slate-300">Adjust the data and model settings, train the network, and test a new observation.</p>
+          </div></div>
+        </header>
+
+        <div className="grid gap-5 lg:grid-cols-5">
+          <Card className="rounded-2xl shadow-md lg:col-span-3"><CardContent className="p-5">
+            <div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-bold">1. Training dataset</h2><p className="text-sm text-slate-500">Features X and binary label y</p></div>
+              <Button variant="outline" size="sm" onClick={() => setRows([...rows, { x1: 0.25, x2: 0.25, y: 0 }])}><Plus className="mr-1 h-4 w-4" /> Row</Button></div>
+            <div className="overflow-hidden rounded-xl border">
+              <div className="grid grid-cols-[1fr_1fr_1fr_44px] bg-slate-100 px-3 py-2 text-xs font-bold uppercase text-slate-500"><span>Feature 1</span><span>Feature 2</span><span>Label</span><span /></div>
+              {rows.map((r, i) => <div key={i} className="grid grid-cols-[1fr_1fr_1fr_44px] items-center border-t px-2 py-1.5">
+                {['x1','x2','y'].map(k => <input key={k} type="number" step={k === 'y' ? 1 : 0.1} min={k === 'y' ? 0 : undefined} max={k === 'y' ? 1 : undefined} value={r[k]} onChange={e => updateRow(i, k, e.target.value)} className="mr-2 rounded-lg border bg-white px-2 py-1.5 text-sm" />)}
+                <button onClick={() => rows.length > 2 && setRows(rows.filter((_, idx) => idx !== i))} className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash2 className="h-4 w-4" /></button>
+              </div>)}
+            </div>
+          </CardContent></Card>
+
+          <Card className="rounded-2xl shadow-md lg:col-span-2"><CardContent className="p-5">
+            <h2 className="text-lg font-bold">2. Model architecture</h2>
+            <p className="mb-5 text-sm text-slate-500">Dense hidden layer with ReLU and sigmoid output</p>
+            <div className="flex items-center justify-around rounded-xl bg-slate-50 p-4">
+              <Layer title="Input" count={2} color="border-cyan-500" /><div className="text-slate-300">→</div>
+              <Layer title="Hidden" count={Math.min(hidden, 10)} color="border-violet-500" /><div className="text-slate-300">→</div>
+              <Layer title="Output" count={1} color="border-emerald-500" />
+            </div>
+            <div className="mt-5 space-y-4">
+              <label className="block text-sm font-medium">Hidden neurons: <b>{hidden}</b><input type="range" min="2" max="10" value={hidden} onChange={e => { setHidden(Number(e.target.value)); setResult(null); }} className="mt-2 w-full accent-violet-600" /></label>
+              <label className="block text-sm font-medium">Epochs: <b>{epochs}</b><input type="range" min="10" max="500" step="10" value={epochs} onChange={e => setEpochs(Number(e.target.value))} className="mt-2 w-full accent-blue-600" /></label>
+              <label className="block text-sm font-medium">Learning rate: <b>{lr}</b><input type="range" min="0.01" max="0.5" step="0.01" value={lr} onChange={e => setLr(Number(e.target.value))} className="mt-2 w-full accent-emerald-600" /></label>
+            </div>
+          </CardContent></Card>
+        </div>
+
+        <div className="grid gap-5 lg:grid-cols-2">
+          <Card className="rounded-2xl shadow-md"><CardContent className="p-5">
+            <div className="flex items-center justify-between"><div><h2 className="text-lg font-bold">3. Compile and train</h2><p className="text-sm text-slate-500">Binary cross-entropy and gradient descent</p></div>
+              <div className="flex gap-2"><Button variant="outline" onClick={() => { setRows(initialRows); setResult(null); }}><RotateCcw className="h-4 w-4" /></Button><Button onClick={run} disabled={running || rows.length < 2} className="bg-blue-600 hover:bg-blue-700"><Play className="mr-2 h-4 w-4" />{running ? 'Training…' : 'Train model'}</Button></div></div>
+            <div className="mt-5 h-44 rounded-xl bg-slate-950 p-3">
+              {result ? <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full"><polyline points={points} fill="none" stroke="#22d3ee" strokeWidth="2" vectorEffect="non-scaling-stroke" /><line x1="0" y1="99" x2="100" y2="99" stroke="#475569" /><line x1="1" y1="0" x2="1" y2="100" stroke="#475569" /></svg> : <div className="flex h-full items-center justify-center text-sm text-slate-400">Loss curve appears after training</div>}
+            </div>
+            {result && <div className="mt-3 grid grid-cols-2 gap-3"><div className="rounded-xl bg-cyan-50 p-3"><div className="text-xs font-semibold uppercase text-cyan-700">Final loss</div><div className="text-2xl font-bold">{result.history.at(-1).toFixed(4)}</div></div><div className="rounded-xl bg-emerald-50 p-3"><div className="text-xs font-semibold uppercase text-emerald-700">Training accuracy</div><div className="text-2xl font-bold">{(accuracy * 100).toFixed(0)}%</div></div></div>}
+          </CardContent></Card>
+
+          <Card className="rounded-2xl shadow-md"><CardContent className="p-5">
+            <h2 className="text-lg font-bold">4. Make a prediction</h2><p className="text-sm text-slate-500">Enter a new observation and inspect its probability.</p>
+            <div className="mt-5 grid grid-cols-2 gap-3">{['x1','x2'].map((k, i) => <label key={k} className="text-sm font-medium">Feature {i + 1}<input type="number" step="0.1" value={test[k]} onChange={e => setTest({ ...test, [k]: e.target.value })} className="mt-1 w-full rounded-xl border px-3 py-2" /></label>)}</div>
+            <div className="mt-5 rounded-2xl bg-gradient-to-r from-violet-600 to-blue-600 p-5 text-white">
+              {prediction === null ? <p className="text-sm text-blue-100">Train the model before making a prediction.</p> : <><div className="text-sm text-blue-100">Predicted probability</div><div className="mt-1 text-4xl font-bold">{(prediction * 100).toFixed(1)}%</div><div className="mt-3 inline-flex rounded-full bg-white/20 px-3 py-1 text-sm font-semibold">Predicted class: {prediction > 0.5 ? 1 : 0}</div><div className="mt-3 h-2 overflow-hidden rounded-full bg-white/20"><motion.div initial={{ width: 0 }} animate={{ width: `${prediction * 100}%` }} className="h-full bg-cyan-300" /></div></>}
+            </div>
+            <p className="mt-4 text-xs leading-relaxed text-slate-500">Teaching note: because this dataset contains only five observations, results may vary between training runs. The demo is intended to illustrate the workflow rather than provide a reliable predictive model.</p>
+          </CardContent></Card>
+        </div>
+      </div>
+    </div>
+  );
+}
